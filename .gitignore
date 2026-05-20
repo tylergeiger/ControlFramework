@@ -153,3 +153,4 @@ neo4j/Network-dev.graphml
 *.log*
 *.avsc
 CLAUDE.md
+cc-usage-log.md
