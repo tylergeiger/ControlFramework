@@ -56,11 +56,20 @@ class PollEvent(ABCActorEvent):
 
     def process(self):
         from fabric_cf.orchestrator.core.orchestrator_handler import OrchestratorHandler
+        from fabric_cf.orchestrator.core.orchestrator_kernel import OrchestratorKernelSingleton
         oh = OrchestratorHandler()
+        kernel = OrchestratorKernelSingleton.get()
         for graph_format, level in self.model_level_list:
-            oh.discover_broker_query_model(controller=oh.controller_state.controller,
-                                           graph_format=graph_format, force_refresh=True,
-                                           level=level)
+            try:
+                oh.discover_broker_query_model(controller=oh.controller_state.controller,
+                                               graph_format=graph_format, force_refresh=True,
+                                               level=level)
+            except Exception as e:
+                kernel.get_logger().error(f"BQM poll failed for format={graph_format} level={level}: {e}")
+                saved = kernel.get_saved_bqm(graph_format=graph_format, level=level)
+                if saved is not None:
+                    saved.refresh_in_progress = False
+                    saved.refresh_started_at = None
 
 
 class SummaryPollEvent(ABCActorEvent):
@@ -69,10 +78,19 @@ class SummaryPollEvent(ABCActorEvent):
 
     def process(self):
         from fabric_cf.orchestrator.core.orchestrator_handler import OrchestratorHandler
+        from fabric_cf.orchestrator.core.orchestrator_kernel import OrchestratorKernelSingleton
         oh = OrchestratorHandler()
+        kernel = OrchestratorKernelSingleton.get()
         for level in self.level_list:
-            oh.discover_broker_query_model_summary(controller=oh.controller_state.controller,
-                                                    force_refresh=True, level=level)
+            try:
+                oh.discover_broker_query_model_summary(controller=oh.controller_state.controller,
+                                                        force_refresh=True, level=level)
+            except Exception as e:
+                kernel.get_logger().error(f"Summary poll failed for level={level}: {e}")
+                saved = kernel.get_saved_summary(level=level)
+                if saved is not None:
+                    saved.refresh_in_progress = False
+                    saved.refresh_started_at = None
 
 
 class OrchestratorKernel(ABCTick):
@@ -233,6 +251,14 @@ class OrchestratorKernel(ABCTick):
                                                graph_format=GraphFormat.GRAPHML,
                                                force_refresh=True, level=0)
         self.load_model(model=model)
+
+        try:
+            summary = oh.discover_broker_query_model_summary(
+                controller=self.get_management_actor(),
+                force_refresh=True, level=2)
+            self.get_logger().info("Successfully seeded summary cache for level 2")
+        except Exception as e:
+            self.get_logger().warning(f"Failed to seed summary cache at startup: {e}")
 
         self.get_logger().info("Starting SliceDeferThread")
         self.defer_thread = SliceDeferThread(kernel=self)
