@@ -1,4 +1,4 @@
-FROM python:3.12.12
+FROM python:3.13.13
 MAINTAINER Komal Thareja<komal.thareja@gmail.com>
 
 RUN mkdir -p /usr/src/app
@@ -27,7 +27,7 @@ RUN pip install .
 RUN mkdir -p "/etc/fabric/message_bus/schema"
 RUN mkdir -p "/etc/fabric/actor/config"
 RUN mkdir -p "/var/log/actor"
-RUN cp /opt/venv/lib/python3.12/site-packages/fabric_mb/message_bus/schema/*.avsc /etc/fabric/message_bus/schema
+RUN cp /opt/venv/lib/python3.13/site-packages/fabric_mb/message_bus/schema/*.avsc /etc/fabric/message_bus/schema
 RUN sh /usr/src/app/install.sh
 
 ENTRYPOINT ["/usr/src/app/docker-entrypoint.sh"]
