@@ -26,7 +26,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple, Dict, TYPE_CHECKING, List, Optional
 from collections import defaultdict
 
@@ -166,6 +166,15 @@ class AggregatedBQMPlugin:
                   ReservationStates.ActiveTicketed.value,
                   ReservationStates.Ticketed.value,
                   ReservationStates.Nascent.value]
+
+        # When no time range is specified, default to "now" so that future
+        # advance reservations (Ticketed state) are not counted as currently
+        # occupied.  Callers that need future availability (e.g. the calendar
+        # endpoint) pass explicit start/end and are unaffected.
+        if start is None and end is None:
+            now = datetime.now(timezone.utc)
+            start = now
+            end = now
 
         # get existing reservations for this node
         existing_reservations = db.get_reservations(graph_node_id=node_id, states=states, start=start, end=end)
@@ -323,6 +332,19 @@ class AggregatedBQMPlugin:
                                                                                       start=start, end=end)
                     site_sliver.capacity_allocations = site_sliver.capacity_allocations + allocated_caps
                     worker_sliver.capacity_allocations = allocated_caps
+
+                    # Warn when allocations exceed capacity
+                    w_cap = sliver.get_capacities() or Capacities()
+                    if sliver.get_capacity_delegations() is not None:
+                        _, dlg = sliver.get_capacity_delegations().get_sole_delegation()
+                        if dlg.get_format() == DelegationFormat.SinglePool:
+                            w_cap = dlg.get_details()
+                    a_core = getattr(allocated_caps, 'core', 0) or 0
+                    c_core = getattr(w_cap, 'core', 0) or 0
+                    if a_core > c_core:
+                        self.logger.warning(
+                            f"Over-allocation detected on {sliver.get_name()} at {sliver.site}: "
+                            f"cores_alloc={a_core} > cores_cap={c_core}")
 
                 # get the location if available
                 if loc is None:
@@ -790,6 +812,15 @@ class AggregatedBQMPlugin:
                 w_ram_alloc = getattr(worker_allocs, 'ram', 0) or 0
                 w_disk_alloc = getattr(worker_allocs, 'disk', 0) or 0
 
+                # Warn when allocations exceed capacity (indicates stale or
+                # over-committed reservations on a host)
+                if w_core_alloc > w_core_cap or w_ram_alloc > w_ram_cap or w_disk_alloc > w_disk_cap:
+                    self.logger.warning(
+                        f"Over-allocation detected on {sliver.get_name()} at {s}: "
+                        f"cores={w_core_alloc}/{w_core_cap} "
+                        f"ram={w_ram_alloc}/{w_ram_cap} "
+                        f"disk={w_disk_alloc}/{w_disk_cap}")
+
                 site_cores_cap += w_core_cap
                 site_cores_alloc += w_core_alloc
                 site_ram_cap += w_ram_cap
@@ -810,23 +841,26 @@ class AggregatedBQMPlugin:
                 # Worker-level components
                 worker_components = {}
                 if sliver.attached_components_info is not None:
+                    # First pass: accumulate total capacity per type/model
                     for comp in sliver.attached_components_info.list_devices():
                         rt = comp.resource_type
                         rm = comp.resource_model
                         comp_key = f"{rt}-{rm}"
                         comp_cap = getattr(comp.capacities, 'unit', 0) or 0
 
-                        comp_alloc = 0
-                        if rt in allocated_comp_caps and rm in allocated_comp_caps[rt]:
-                            comp_alloc = getattr(allocated_comp_caps[rt][rm], 'unit', 0) or 0
-
                         if comp_key not in worker_components:
                             worker_components[comp_key] = {"capacity": 0, "allocated": 0}
                         worker_components[comp_key]["capacity"] += comp_cap
-                        worker_components[comp_key]["allocated"] += comp_alloc
-
                         site_components[comp_key]["capacity"] += comp_cap
-                        site_components[comp_key]["allocated"] += comp_alloc
+
+                    # Second pass: set allocations once per type/model from DB query results
+                    for rt, models in allocated_comp_caps.items():
+                        for rm, alloc_cap in models.items():
+                            comp_key = f"{rt}-{rm}"
+                            comp_alloc = getattr(alloc_cap, 'unit', 0) or 0
+                            if comp_key in worker_components:
+                                worker_components[comp_key]["allocated"] += comp_alloc
+                                site_components[comp_key]["allocated"] += comp_alloc
 
                 # Build host record (level 2 includes per-host detail)
                 if query_level == 2 or query_level == 0:
