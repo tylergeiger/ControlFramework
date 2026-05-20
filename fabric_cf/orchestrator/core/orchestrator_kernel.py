@@ -66,10 +66,6 @@ class PollEvent(ABCActorEvent):
                                                level=level)
             except Exception as e:
                 kernel.get_logger().error(f"BQM poll failed for format={graph_format} level={level}: {e}")
-                saved = kernel.get_saved_bqm(graph_format=graph_format, level=level)
-                if saved is not None:
-                    saved.refresh_in_progress = False
-                    saved.refresh_started_at = None
 
 
 class SummaryPollEvent(ABCActorEvent):
@@ -87,10 +83,6 @@ class SummaryPollEvent(ABCActorEvent):
                                                         force_refresh=True, level=level)
             except Exception as e:
                 kernel.get_logger().error(f"Summary poll failed for level={level}: {e}")
-                saved = kernel.get_saved_summary(level=level)
-                if saved is not None:
-                    saved.refresh_in_progress = False
-                    saved.refresh_started_at = None
 
 
 class OrchestratorKernel(ABCTick):
@@ -280,16 +272,14 @@ class OrchestratorKernel(ABCTick):
             self.lock.acquire()
             model_level_list = []
             for cached_bqm in self.bqm_cache.values():
-                if cached_bqm.can_refresh():
-                    cached_bqm.start_refresh()
+                if cached_bqm.can_refresh() and cached_bqm.start_refresh():
                     model_level_list.append((cached_bqm.get_graph_format(), cached_bqm.get_level()))
             if self.event_processor is not None and len(model_level_list) > 0:
                 self.event_processor.enqueue(incoming=PollEvent(model_level_list=model_level_list))
 
             summary_level_list = []
             for cached_summary in self.summary_cache.values():
-                if cached_summary.can_refresh():
-                    cached_summary.start_refresh()
+                if cached_summary.can_refresh() and cached_summary.start_refresh():
                     summary_level_list.append(cached_summary.get_level())
             if self.event_processor is not None and len(summary_level_list) > 0:
                 self.event_processor.enqueue(incoming=SummaryPollEvent(level_list=summary_level_list))
