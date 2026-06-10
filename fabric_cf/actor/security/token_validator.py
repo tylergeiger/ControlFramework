@@ -41,12 +41,15 @@ class TokenValidator:
     and uses it to validate provided tokens"""
 
     def __init__(self, *, credmgr_host: str, refresh_period: datetime.timedelta,
-                 jwt_validator: JWTValidator):
+                 jwt_validator: JWTValidator, verify_sig: bool = True):
         """ Initialize a validator with an endpoint URL presenting Token revoke list,
         a refresh period for keys expressed as datetime.timedelta and
         audience (i.e. CI Logon client id cilogon:/client_id/1234567890).
         :param credmgr_host:
         :param refresh_period:
+        :param jwt_validator:
+        :param verify_sig: when False, the JWT signature is not verified and the
+                           token revoke list lookup is skipped. Defaults to True.
         """
         self.credmgr_host = credmgr_host
         assert refresh_period is None or isinstance(refresh_period, datetime.timedelta)
@@ -55,6 +58,7 @@ class TokenValidator:
         self.trl_fetched = None
         self.credmgr_proxy = CredmgrProxy(credmgr_host=credmgr_host)
         self.jwt_validator = jwt_validator
+        self.verify_sig = verify_sig
         self.logger = logging.getLogger()
 
     def __fetch_token_revoke_list(self, *, project_id: str):
@@ -91,6 +95,13 @@ class TokenValidator:
         """
         result = None
         token_hash = generate_sha256(token=token)
+
+        # Skip signature verification and the token revoke list lookup; claims are
+        # read directly from the supplied token.
+        if not self.verify_sig:
+            decoded_token = self.__decode_without_signature(token=token, verify_exp=verify_exp)
+            return FabricToken(decoded_token=decoded_token, token_hash=token_hash)
+
         if self.jwt_validator is not None:
             code, token_or_exception = self.jwt_validator.validate_jwt(token=token, verify_exp=verify_exp)
             if code is not ValidateCode.VALID:
@@ -105,3 +116,24 @@ class TokenValidator:
             raise TokenException("JWT Token validator not initialized, skipping validation")
 
         return result
+
+    @staticmethod
+    def __decode_without_signature(*, token: str, verify_exp: bool) -> dict:
+        """
+        Decode a JWT and return its claims without verifying the signature.
+        Expiry is honored when verify_exp is True.
+        @param token raw JWT string
+        @param verify_exp whether to enforce the exp claim
+        @return decoded claims dictionary
+        """
+        try:
+            import jwt
+        except ImportError as e:
+            raise TokenException(f"PyJWT is required to decode the token: {e}")
+
+        try:
+            return jwt.decode(token, options={"verify_signature": False,
+                                              "verify_aud": False,
+                                              "verify_exp": verify_exp})
+        except Exception as e:
+            raise TokenException(f"Unable to decode provided token: {e}")

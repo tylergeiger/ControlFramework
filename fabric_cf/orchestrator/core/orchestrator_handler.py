@@ -68,7 +68,11 @@ class OrchestratorHandler:
         self.jwks_url = self.globals.get_config().get_oauth_config().get(Constants.PROPERTY_CONF_O_AUTH_JWKS_URL, None)
         self.pdp_config = self.globals.get_config().get_global_config().get_pdp_config()
         self.config = self.globals.get_config()
-        self.infrastructure_project_id = self.config.get_runtime_config().get(Constants.INFRASTRUCTURE_PROJECT_ID, None)
+        # Default to an empty list when unset so membership tests (e.g. in
+        # __compute_lease_end_time) don't fail when no infrastructure projects
+        # are configured.
+        self.infrastructure_project_id = self.config.get_runtime_config().get(Constants.INFRASTRUCTURE_PROJECT_ID,
+                                                                              None) or []
         self.total_slice_count_seed = self.config.get_runtime_config().get(Constants.TOTAL_SLICE_COUNT_SEED, 0)
         self.local_bqm = self.globals.get_config().get_global_config().get_bqm_config().get(
                     Constants.LOCAL_BQM, False)

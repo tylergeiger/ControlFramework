@@ -1,0 +1,94 @@
+# Local test-mode broker config. See config.orchestrator.yaml for notes on
+# verify-sig / PLAINTEXT / service-name hostnames.
+
+runtime:
+  kafka-server: broker1:9092
+  kafka-schema-registry-url: http://schemaregistry:8081
+  kafka-key-schema: /etc/fabric/message_bus/schema/key.avsc
+  kafka-value-schema: /etc/fabric/message_bus/schema/message.avsc
+  kafka-security-protocol: PLAINTEXT
+  kafka-group-id: fabric-cf
+  prometheus.port: 11001
+
+logging:
+  log-directory: /var/log/actor
+  log-file: actor.log
+  log-level: DEBUG
+  log-retain: 5
+  log-size: 5000000
+  logger: broker
+
+oauth:
+  jwks-url: https://localhost/certs
+  key-refresh: 00:10:00
+  verify-exp: False
+  verify-sig: False
+
+database:
+  db-user: fabric
+  db-password: fabric
+  db-name: broker
+  db-host: database:5432
+
+container:
+  container.guid: broker-conainer
+
+time:
+  time.startTime: -1
+  time.cycleMillis: 1000
+  time.firstTick: 0
+  time.manual: false
+
+pdp:
+  url: http://localhost:8082/services/pdp
+  enable: False
+
+neo4j:
+  url: bolt://neo4j-broker:7687
+  user: neo4j
+  pass: password
+  import_host_dir: /usr/src/app/neo4j/imports/
+  import_dir: /imports
+
+bqm:
+  kafka-topic: broker-resource-usage
+  publish-interval: 120
+
+actor:
+  type: broker
+  name: broker
+  guid: broker-guid
+  description: Broker
+  kafka-topic: broker-topic
+  policy:
+      module: fabric_cf.actor.core.policy.broker_simpler_units_policy
+      class: BrokerSimplerUnitsPolicy
+      properties:
+        core_capacity_threshold:
+          enabled: true
+          core_usage_threshold_percent: 75
+        algorithm:
+          FirstFit: # Default allocation policy for all sites
+            enabled: true
+  controls:
+      - control:
+          type: VM, Container, Baremetal
+          class: NetworkNodeInventory
+          module: fabric_cf.actor.core.policy.network_node_inventory
+
+peers:
+  - peer:
+      name: orchestrator
+      type: orchestrator
+      guid: orchestrator-guid
+      kafka-topic: orchestrator-topic
+  - peer:
+      name: net1-am
+      guid: net1-am-guid
+      type: authority
+      kafka-topic: net1-am-topic
+  - peer:
+      name: site1-am
+      guid: site1-am-guid
+      type: authority
+      kafka-topic: site1-am-topic
