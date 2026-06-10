@@ -183,17 +183,24 @@ class Globals:
         CREDMGR_CERTS = oauth_config.get(Constants.PROPERTY_CONF_O_AUTH_JWKS_URL, None)
         CREDMGR_KEY_REFRESH = oauth_config.get(Constants.PROPERTY_CONF_O_AUTH_KEY_REFRESH, None)
         CREDMGR_TRL_REFRESH = oauth_config.get(Constants.PROPERTY_CONF_O_AUTH_TRL_REFRESH, '00:01:00')
+        verify_sig = oauth_config.get(Constants.PROPERTY_CONF_O_AUTH_VERIFY_SIG, True)
         self.log.info(f'Initializing JWT Validator to use {CREDMGR_CERTS} endpoint, '
                       f'refreshing keys every {CREDMGR_KEY_REFRESH} HH:MM:SS refreshing '
                       f'token revoke list every {CREDMGR_TRL_REFRESH} HH:MM:SS')
         t = datetime.strptime(CREDMGR_KEY_REFRESH, "%H:%M:%S")
-        self.jwt_validator = JWTValidator(url=CREDMGR_CERTS,
-                                          refresh_period=timedelta(hours=t.hour, minutes=t.minute, seconds=t.second))
+        refresh = timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
+        if not verify_sig:
+            # Skip building the JWKS validator; the certs endpoint is not contacted
+            # and signature verification is bypassed in TokenValidator.
+            self.log.info("JWT signature verification disabled (oauth.verify-sig=False).")
+            self.jwt_validator = None
+        else:
+            self.jwt_validator = JWTValidator(url=CREDMGR_CERTS, refresh_period=refresh)
         from urllib.parse import urlparse
-        t = datetime.strptime(CREDMGR_KEY_REFRESH, "%H:%M:%S")
         self.token_validator = TokenValidator(credmgr_host=str(urlparse(CREDMGR_CERTS).hostname),
-                                              refresh_period=timedelta(hours=t.hour, minutes=t.minute, seconds=t.second),
-                                              jwt_validator=self.jwt_validator)
+                                              refresh_period=refresh,
+                                              jwt_validator=self.jwt_validator,
+                                              verify_sig=verify_sig)
 
         core_api = self.config.get_core_api_config()
         if core_api.get("enable", False):
@@ -259,12 +266,17 @@ class Globals:
         sasl_password = self.config.get_kafka_prod_user_pwd()
         sasl_mechanism = self.config.get_kafka_sasl_mechanism()
 
+        security_protocol = self.config.get_kafka_security_protocol()
         conf = {Constants.BOOTSTRAP_SERVERS: self.config.get_kafka_server(),
-                Constants.SECURITY_PROTOCOL: self.config.get_kafka_security_protocol(),
-                Constants.SSL_CA_LOCATION: self.config.get_kafka_ssl_ca_location(),
-                Constants.SSL_CERTIFICATE_LOCATION: self.config.get_kafka_ssl_cert_location(),
-                Constants.SSL_KEY_LOCATION: self.config.get_kafka_ssl_key_location(),
-                Constants.SSL_KEY_PASSWORD: self.config.get_kafka_ssl_key_password()}
+                Constants.SECURITY_PROTOCOL: security_protocol}
+
+        # Attach SSL key/cert material only when the protocol uses SSL; a PLAINTEXT
+        # broker needs no certificates.
+        if security_protocol is not None and "SSL" in security_protocol.upper():
+            conf[Constants.SSL_CA_LOCATION] = self.config.get_kafka_ssl_ca_location()
+            conf[Constants.SSL_CERTIFICATE_LOCATION] = self.config.get_kafka_ssl_cert_location()
+            conf[Constants.SSL_KEY_LOCATION] = self.config.get_kafka_ssl_key_location()
+            conf[Constants.SSL_KEY_PASSWORD] = self.config.get_kafka_ssl_key_password()
 
         if sasl_username is not None and sasl_username != '' and sasl_password is not None and sasl_password != '':
             conf[Constants.SASL_USERNAME] = sasl_username
@@ -293,15 +305,19 @@ class Globals:
         sasl_password = self.config.get_kafka_prod_user_pwd()
         sasl_mechanism = self.config.get_kafka_sasl_mechanism()
 
+        security_protocol = self.config.get_kafka_security_protocol()
         conf = {Constants.BOOTSTRAP_SERVERS: self.config.get_kafka_server(),
-                Constants.SECURITY_PROTOCOL: self.config.get_kafka_security_protocol(),
-                Constants.SSL_CA_LOCATION: self.config.get_kafka_ssl_ca_location(),
-                Constants.SSL_CERTIFICATE_LOCATION: self.config.get_kafka_ssl_cert_location(),
-                Constants.SSL_KEY_LOCATION: self.config.get_kafka_ssl_key_location(),
-                Constants.SSL_KEY_PASSWORD: self.config.get_kafka_ssl_key_password(),
+                Constants.SECURITY_PROTOCOL: security_protocol,
                 Constants.SCHEMA_REGISTRY_URL: self.config.get_kafka_schema_registry(),
                 Constants.PROPERTY_CONF_KAFKA_REQUEST_TIMEOUT_MS: self.config.get_kafka_request_timeout_ms(),
                 Constants.PROPERTY_CONF_KAFKA_MAX_MESSAGE_SIZE: self.config.get_kafka_max_message_size()}
+
+        # See get_kafka_config_admin_client: skip SSL material for PLAINTEXT brokers.
+        if security_protocol is not None and "SSL" in security_protocol.upper():
+            conf[Constants.SSL_CA_LOCATION] = self.config.get_kafka_ssl_ca_location()
+            conf[Constants.SSL_CERTIFICATE_LOCATION] = self.config.get_kafka_ssl_cert_location()
+            conf[Constants.SSL_KEY_LOCATION] = self.config.get_kafka_ssl_key_location()
+            conf[Constants.SSL_KEY_PASSWORD] = self.config.get_kafka_ssl_key_password()
 
         if sasl_username is not None and sasl_username != '' and sasl_password is not None and sasl_password != '':
             conf[Constants.SASL_USERNAME] = sasl_username

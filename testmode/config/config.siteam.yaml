@@ -1,0 +1,92 @@
+# Local test-mode site Aggregate Manager config.
+# Requires an ARM advertisement model mounted at substrate.file (see testmode/README.md).
+
+runtime:
+  kafka-server: broker1:9092
+  kafka-schema-registry-url: http://schemaregistry:8081
+  kafka-key-schema: /etc/fabric/message_bus/schema/key.avsc
+  kafka-value-schema: /etc/fabric/message_bus/schema/message.avsc
+  kafka-security-protocol: PLAINTEXT
+  kafka-group-id: fabric-cf
+  prometheus.port: 11000
+
+logging:
+  log-directory: /var/log/actor
+  log-file: actor.log
+  log-level: DEBUG
+  log-retain: 5
+  log-size: 5000000
+  logger: site1-am
+
+oauth:
+  jwks-url: https://localhost/certs
+  key-refresh: 00:10:00
+  verify-exp: False
+  verify-sig: False
+
+database:
+  db-user: fabric
+  db-password: fabric
+  db-name: am
+  db-host: database:5432
+
+container:
+  container.guid: site1-am-conainer
+
+time:
+  time.startTime: -1
+  time.cycleMillis: 1000
+  time.firstTick: 0
+  time.manual: false
+
+pdp:
+  url: http://localhost:8082/services/pdp
+  enable: False
+
+neo4j:
+  url: bolt://neo4j-siteam:7687
+  user: neo4j
+  pass: password
+  import_host_dir: /usr/src/app/neo4j/imports/
+  import_dir: /imports
+
+actor:
+  type: authority
+  name: site1-am
+  guid: site1-am-guid
+  description: Site AM
+  kafka-topic: site1-am-topic
+  substrate.file: /etc/fabric/actor/config/neo4j/arm.graphml
+  policy:
+      module: fabric_cf.actor.core.policy.authority_calendar_policy
+      class: AuthorityCalendarPolicy
+  resources:
+      - resource:
+          type: VM
+          label: VM AM
+          description: VM AM
+          handler:
+            module: fabric_cf.actor.handlers.mock_am_handler
+            class: MockAMHandler
+            properties:
+              # Each node gets a stable address from this pool; set management-ip
+              # to assign a single fixed address instead.
+              management-ip-pool: 10.20.0.0/16
+  controls:
+      - control:
+          type: VM, Container, Baremetal
+          module: fabric_cf.actor.core.policy.network_node_control
+          class: NetworkNodeControl
+
+peers:
+  - peer:
+      name: orchestrator
+      type: orchestrator
+      guid: orchestrator-guid
+      kafka-topic: orchestrator-topic
+  - peer:
+      name: broker
+      type: broker
+      guid: broker-guid
+      kafka-topic: broker-topic
+      delegation: primary

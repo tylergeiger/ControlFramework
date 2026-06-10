@@ -172,6 +172,9 @@ class Constants:
     PROPERTY_CONF_O_AUTH_KEY_REFRESH = "key-refresh"
     PROPERTY_CONF_O_AUTH_TRL_REFRESH = "trl-refresh"
     PROPERTY_CONF_O_AUTH_VERIFY_EXP = "verify-exp"
+    # When False, the JWT signature is not verified and claims are read from the
+    # token as-is. Defaults to True.
+    PROPERTY_CONF_O_AUTH_VERIFY_SIG = "verify-sig"
 
     CONFIG_SECTION_REPORTS_API = "reports_api"
 

@@ -369,7 +369,9 @@ class AggregatedBQMPlugin:
                         worker_sliver.capacities = delegation.get_details()
                 # This for the case when BQM is generated from Orchestrator
                 else:
-                    site_sliver.capacities += sliver.get_capacities()
+                    # A node may advertise no capacities; guard against None so the
+                    # aggregate does not assert (see the same guard at w_cap above).
+                    site_sliver.capacities += (sliver.get_capacities() or Capacities())
                     worker_sliver.capacities = sliver.get_capacities()
 
                     # collect available components in lists by type and model for the site (for later aggregation)
@@ -430,7 +432,8 @@ class AggregatedBQMPlugin:
                     p4_sliver.set_site(site=p4.get_site())
                     p4_sliver.capacities = Capacities()
                     p4_sliver.capacity_allocations = Capacities()
-                    p4_sliver.capacities += p4.get_capacities()
+                    # A P4 switch may advertise no capacities; guard against None.
+                    p4_sliver.capacities += (p4.get_capacities() or Capacities())
                     if not self.DEBUG_FLAG and kwargs['query_level'] != 0:
                         # query database for everything taken on this node
                         allocated_caps, allocated_comp_caps = self.occupied_node_capacity(db=db, node_id=p4.node_id,

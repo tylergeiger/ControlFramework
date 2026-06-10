@@ -229,10 +229,16 @@ class OrchestratorKernel(ABCTick):
         self.logger = GlobalsSingleton.get().get_logger()
         from fabric_cf.orchestrator.core.orchestrator_handler import OrchestratorHandler
         oh = OrchestratorHandler()
-        model = oh.discover_broker_query_model(controller=self.get_management_actor(),
-                                               graph_format=GraphFormat.GRAPHML,
-                                               force_refresh=True, level=0)
-        self.load_model(model=model)
+        # Warm the combined broker model cache at startup. At cold boot the broker
+        # may have no delegations yet, leaving the model empty; it is re-discovered
+        # on demand and refreshed on each tick.
+        try:
+            model = oh.discover_broker_query_model(controller=self.get_management_actor(),
+                                                   graph_format=GraphFormat.GRAPHML,
+                                                   force_refresh=True, level=0)
+            self.load_model(model=model)
+        except Exception as e:
+            self.logger.warning(f"Broker query model not available at startup, continuing without it: {e}")
 
         self.get_logger().info("Starting SliceDeferThread")
         self.defer_thread = SliceDeferThread(kernel=self)

@@ -1,0 +1,288 @@
+# Local test-mode stack for the FABRIC Control Framework.
+#
+#   docker compose -f docker-compose-testmode.yaml up --build
+#
+# Brings up the orchestrator, broker and two aggregate managers wired to a local
+# Kafka (PLAINTEXT), Postgres and Neo4j, with no external dependencies (no
+# Credential Manager, Policy Decision Point, Kafka SSL secrets or fabric-testbed.net).
+# JWT signature verification is off (oauth.verify-sig=False), so any well-formed
+# bearer token is accepted and its claims are read as-is.
+#
+# The orchestrator REST API is exposed on http://localhost:8700.
+---
+services:
+  # ------------------------------------------------------------------ Kafka
+  broker1:
+    image: confluentinc/cp-kafka:latest
+    restart: always
+    hostname: broker1
+    container_name: tm-broker1
+    ports:
+      - 19092:19092   # host access (PLAINTEXT)
+    environment:
+      CLUSTER_ID: kraft-cluster-id-01
+      KAFKA_MESSAGE_MAX_BYTES: 3145764
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 3145764
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 3145764
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: PLAINTEXT://broker1:9092,HOST://0.0.0.0:19092,CONTROLLER://broker1:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker1:9092,HOST://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: ./kraft-logs
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      # The PLAINTEXT listener binds to the broker1 interface (localhost only
+      # carries the HOST listener on 19092), so probe broker1:9092 here.
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server broker1:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  schemaregistry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: tm-schemaregistry
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+    ports:
+      - 8081:8081
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: ""
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://broker1:9092
+      SCHEMA_REGISTRY_HOST_NAME: schemaregistry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_DEBUG: 'true'
+
+  # --------------------------------------------------------------- Postgres
+  database:
+    image: fabrictestbed/postgres:17.7
+    container_name: tm-database
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+      - tm-pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      - POSTGRES_MULTIPLE_DATABASES=orchestrator,broker,am,netam
+      - POSTGRES_USER=fabric
+      - POSTGRES_PASSWORD=fabric
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fabric"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------------ Neo4j
+  neo4j-orchestrator: &neo4j-base
+    image: fabrictestbed/neo4j-apoc:5.26.19
+    restart: always
+    container_name: tm-neo4j-orchestrator
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=256m
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - tm-neo4j-orchestrator-data:/data
+      - tm-neo4j-orchestrator-imports:/imports
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j-broker:
+    <<: *neo4j-base
+    container_name: tm-neo4j-broker
+    ports:
+      - "8474:7474"
+      - "8687:7687"
+    volumes:
+      - tm-neo4j-broker-data:/data
+      - tm-neo4j-broker-imports:/imports
+
+  neo4j-siteam:
+    <<: *neo4j-base
+    container_name: tm-neo4j-siteam
+    ports:
+      - "9474:7474"
+      - "9687:7687"
+    volumes:
+      - tm-neo4j-siteam-data:/data
+      - tm-neo4j-siteam-imports:/imports
+
+  neo4j-netam:
+    <<: *neo4j-base
+    container_name: tm-neo4j-netam
+    ports:
+      - "10474:7474"
+      - "10687:7687"
+    volumes:
+      - tm-neo4j-netam-data:/data
+      - tm-neo4j-netam-imports:/imports
+
+  # ----------------------------------------------------------- Orchestrator
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile-orchestrator
+    image: cf-orchestrator:testmode
+    container_name: tm-orchestrator
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      neo4j-orchestrator:
+        condition: service_healthy
+    ports:
+      - 8700:8700     # REST API
+      - 11002:11002   # prometheus
+    volumes:
+      - ./testmode/config/config.orchestrator.yaml:/etc/fabric/actor/config/config.yaml
+      # Shared graph-import dir: the actor writes here (import_host_dir) and
+      # neo4j reads the same files (import_dir=/imports). Must be one volume.
+      - tm-neo4j-orchestrator-imports:/usr/src/app/neo4j/imports
+      - tm-orch-logs:/var/log/actor
+
+  # ----------------------------------------------------------------- Broker
+  broker:
+    build:
+      context: .
+      dockerfile: Dockerfile-broker
+    image: cf-broker:testmode
+    container_name: tm-broker
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      neo4j-broker:
+        condition: service_healthy
+    ports:
+      - 11001:11001   # prometheus
+    volumes:
+      - ./testmode/config/config.broker.yaml:/etc/fabric/actor/config/config.yaml
+      - tm-neo4j-broker-imports:/usr/src/app/neo4j/imports
+      - tm-broker-logs:/var/log/actor
+    healthcheck:
+      # The broker only starts its prometheus endpoint after it has finished
+      # container init and peer setup, so this doubles as a readiness signal:
+      # the AMs wait for it before their one-shot delegation advertisement so
+      # the broker is registered (callback present) when they advertise.
+      test: ["CMD-SHELL", "/opt/venv/bin/python -c \"import socket; socket.create_connection(('localhost', 11001), 3)\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # --------------------------------------------------------- Site Authority
+  # NOTE: requires an ARM advertisement model. Provide one via SITE_ARM
+  # (defaults to ./neo4j/RENCI-ad.graphml). See testmode/README.md.
+  site1-am:
+    build:
+      context: .
+      dockerfile: Dockerfile-auth
+    image: cf-authority:testmode
+    container_name: tm-site1-am
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      neo4j-siteam:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    ports:
+      - 11003:11000   # prometheus
+    volumes:
+      - ./testmode/config/config.siteam.yaml:/etc/fabric/actor/config/config.yaml
+      - ${SITE_ARM:-./neo4j/RENCI-ad.graphml}:/etc/fabric/actor/config/neo4j/arm.graphml:ro
+      - tm-neo4j-siteam-imports:/usr/src/app/neo4j/imports
+      - tm-siteam-logs:/var/log/actor
+
+  # ------------------------------------------------------ Network Authority
+  net1-am:
+    image: cf-authority:testmode
+    container_name: tm-net1-am
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      neo4j-netam:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      site1-am:
+        condition: service_started
+    ports:
+      - 11004:11000   # prometheus
+    volumes:
+      - ./testmode/config/config.netam.yaml:/etc/fabric/actor/config/config.yaml
+      - ${NET_ARM:-./neo4j/Network-ad.graphml}:/etc/fabric/actor/config/neo4j/arm.graphml:ro
+      - tm-neo4j-netam-imports:/usr/src/app/neo4j/imports
+      - tm-netam-logs:/var/log/actor
+
+  # ------------------------------------------------ Claim delegations (one-shot)
+  # FABRIC advertises resources with a pull model: each AM creates a source
+  # delegation on startup but the broker only learns about it once it explicitly
+  # claims the delegation. This one-shot service waits for both AMs to advertise
+  # and claims their delegations at the broker, merging them into the broker's
+  # Combined Broker Model so the orchestrator can see the resources. It runs once
+  # and exits; re-run with `docker compose -f docker-compose-testmode.yaml up claim`.
+  claim:
+    image: cf-broker:testmode
+    container_name: tm-claim
+    restart: "no"
+    depends_on:
+      broker:
+        condition: service_healthy
+      site1-am:
+        condition: service_started
+      net1-am:
+        condition: service_started
+    working_dir: /usr/src/app
+    environment:
+      PYTHONPATH: /usr/src/app
+    entrypoint: ["/opt/venv/bin/python"]
+    command: ["/opt/fabric/claim_delegations.py"]
+    volumes:
+      - ./testmode/claim_delegations.py:/opt/fabric/claim_delegations.py:ro
+
+volumes:
+  tm-pgdata:
+  tm-neo4j-orchestrator-data:
+  tm-neo4j-orchestrator-imports:
+  tm-neo4j-broker-data:
+  tm-neo4j-broker-imports:
+  tm-neo4j-siteam-data:
+  tm-neo4j-siteam-imports:
+  tm-neo4j-netam-data:
+  tm-neo4j-netam-imports:
+  tm-orch-logs:
+  tm-broker-logs:
+  tm-siteam-logs:
+  tm-netam-logs:
