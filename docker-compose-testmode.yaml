@@ -74,7 +74,7 @@ services:
     environment:
       - POSTGRES_HOST=database
       - POSTGRES_PORT=5432
-      - POSTGRES_MULTIPLE_DATABASES=orchestrator,broker,am,netam
+      - POSTGRES_MULTIPLE_DATABASES=orchestrator,broker,am,am2,netam
       - POSTGRES_USER=fabric
       - POSTGRES_PASSWORD=fabric
       - PGDATA=/var/lib/postgresql/data/pgdata
@@ -127,6 +127,17 @@ services:
     volumes:
       - tm-neo4j-siteam-data:/data
       - tm-neo4j-siteam-imports:/imports
+
+  # Second site AM (UKY) Neo4j — enables multi-site VM placement (§4f).
+  neo4j-siteam2:
+    <<: *neo4j-base
+    container_name: tm-neo4j-siteam2
+    ports:
+      - "9475:7474"
+      - "9688:7687"
+    volumes:
+      - tm-neo4j-siteam2-data:/data
+      - tm-neo4j-siteam2-imports:/imports
 
   neo4j-netam:
     <<: *neo4j-base
@@ -222,6 +233,30 @@ services:
       - tm-neo4j-siteam-imports:/usr/src/app/neo4j/imports
       - tm-siteam-logs:/var/log/actor
 
+  # ----------------------------------------------- Second Site Authority (UKY)
+  # Advertises UKY-ad.graphml so multi-site VM placement is testable (§4f).
+  # Distinct actor identity / Neo4j / DB (am2) from site1-am.
+  site2-am:
+    image: cf-authority:testmode
+    container_name: tm-site2-am
+    restart: always
+    depends_on:
+      broker1:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      neo4j-siteam2:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    ports:
+      - 11005:11000   # prometheus
+    volumes:
+      - ./testmode/config/config.siteam2.yaml:/etc/fabric/actor/config/config.yaml
+      - ${SITE2_ARM:-./neo4j/UKY-ad.graphml}:/etc/fabric/actor/config/neo4j/arm.graphml:ro
+      - tm-neo4j-siteam2-imports:/usr/src/app/neo4j/imports
+      - tm-siteam2-logs:/var/log/actor
+
   # ------------------------------------------------------ Network Authority
   net1-am:
     image: cf-authority:testmode
@@ -262,11 +297,15 @@ services:
         condition: service_healthy
       site1-am:
         condition: service_started
+      site2-am:
+        condition: service_started
       net1-am:
         condition: service_started
     working_dir: /usr/src/app
     environment:
       PYTHONPATH: /usr/src/app
+      # Claim the second site AM's delegation too so UKY enters the broker CBM.
+      AM_PEERS: "site1-am-guid:site1-am-topic,site2-am-guid:site2-am-topic,net1-am-guid:net1-am-topic"
     entrypoint: ["/opt/venv/bin/python"]
     command: ["/opt/fabric/claim_delegations.py"]
     volumes:
@@ -280,9 +319,12 @@ volumes:
   tm-neo4j-broker-imports:
   tm-neo4j-siteam-data:
   tm-neo4j-siteam-imports:
+  tm-neo4j-siteam2-data:
+  tm-neo4j-siteam2-imports:
   tm-neo4j-netam-data:
   tm-neo4j-netam-imports:
   tm-orch-logs:
   tm-broker-logs:
   tm-siteam-logs:
+  tm-siteam2-logs:
   tm-netam-logs:

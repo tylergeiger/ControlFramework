@@ -92,3 +92,8 @@ peers:
       guid: site1-am-guid
       type: authority
       kafka-topic: site1-am-topic
+  - peer:
+      name: site2-am
+      guid: site2-am-guid
+      type: authority
+      kafka-topic: site2-am-topic
