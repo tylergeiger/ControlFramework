@@ -56,11 +56,11 @@ container:
 bqm:
   # Short refresh so the orchestrator picks up the broker's combined model soon
   # after the one-shot `claim` service populates it (production default is 300).
-  refresh-interval: 30
+  refresh-interval: 10
 
 time:
   time.startTime: -1
-  time.cycleMillis: 1000
+  time.cycleMillis: 250   # testmode: faster actor tick than the 1s production cadence
   time.firstTick: 0
   time.manual: false
 

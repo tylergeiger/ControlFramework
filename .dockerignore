@@ -1,0 +1,10 @@
+.git
+.github
+docs/
+images/
+neo4j/*/data
+neo4j/*/logs
+**/kraft-logs
+secrets/
+*.out
+docker-compose*.yaml

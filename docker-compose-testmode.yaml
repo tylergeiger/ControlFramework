@@ -201,10 +201,10 @@ services:
       # the AMs wait for it before their one-shot delegation advertisement so
       # the broker is registered (callback present) when they advertise.
       test: ["CMD-SHELL", "/opt/venv/bin/python -c \"import socket; socket.create_connection(('localhost', 11001), 3)\" || exit 1"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 20s
 
   # --------------------------------------------------------- Site Authority
   # NOTE: requires an ARM advertisement model. Provide one via SITE_ARM

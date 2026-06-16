@@ -1,5 +1,6 @@
+# syntax=docker/dockerfile:1
 FROM python:3.13.13
-MAINTAINER Komal Thareja<komal.thareja@gmail.com>
+LABEL maintainer="komal.thareja@gmail.com"
 
 RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
@@ -11,23 +12,26 @@ EXPOSE 8700
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN apt-get update
-RUN apt-get install cron -y
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cron \
+ && rm -rf /var/lib/apt/lists/*
 
-COPY docker-entrypoint.sh /usr/src/app/
+# Install third-party dependencies before copying source so this heavy layer is
+# reused when only fabric_cf/ changes. flit's only dynamic field is `version`, so
+# the static [project].dependencies table is safe to read here.
+COPY pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); open('/tmp/requirements.txt','w').write('\n'.join(d['project']['dependencies']))" \
+ && pip install -r /tmp/requirements.txt
+
+# Copy source and install just the package; dependencies are already satisfied.
 COPY fabric_cf /usr/src/app/fabric_cf
-COPY pyproject.toml /usr/src/app/
-COPY README.md /usr/src/app/
-COPY LICENSE /usr/src/app/
-COPY tools/audit.py /usr/src/app/
-COPY tools/export.py /usr/src/app/
-COPY tools/install.sh /usr/src/app/
+COPY README.md LICENSE docker-entrypoint.sh /usr/src/app/
+COPY tools/audit.py tools/export.py tools/install.sh /usr/src/app/
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
 
-RUN pip install .
-RUN mkdir -p "/etc/fabric/message_bus/schema"
-RUN mkdir -p "/etc/fabric/actor/config"
-RUN mkdir -p "/var/log/actor"
-RUN cp /opt/venv/lib/python3.13/site-packages/fabric_mb/message_bus/schema/*.avsc /etc/fabric/message_bus/schema
+RUN mkdir -p /etc/fabric/message_bus/schema /etc/fabric/actor/config /var/log/actor \
+ && cp /opt/venv/lib/python3.13/site-packages/fabric_mb/message_bus/schema/*.avsc /etc/fabric/message_bus/schema
 RUN sh /usr/src/app/install.sh
 
 ENTRYPOINT ["/usr/src/app/docker-entrypoint.sh"]

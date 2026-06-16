@@ -1,0 +1,76 @@
+name: build-images
+
+# Builds the Control Framework container images and pushes them to GHCR.
+# BuildKit layer cache is persisted to the GitHub Actions cache (type=gha),
+# so unchanged layers are restored on later runs instead of rebuilt — pip
+# installs and the slow ansible-galaxy step in the authority image only
+# re-run when fabric_cf/ or pyproject.toml actually change.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: orchestrator
+            dockerfile: Dockerfile-orchestrator
+          - image: broker
+            dockerfile: Dockerfile-broker
+          - image: authority
+            dockerfile: Dockerfile-auth
+          - image: cf
+            dockerfile: Dockerfile-cf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Only authenticate + push on direct pushes/tags, never on PRs from forks
+      # (which lack package-write permission). PRs still build to validate.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/cf-${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha
+            type=raw,value=testmode,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Per-image cache scope so the four builds don't overwrite each other.
+          cache-from: type=gha,scope=cf-${{ matrix.image }}
+          cache-to: type=gha,scope=cf-${{ matrix.image }},mode=max

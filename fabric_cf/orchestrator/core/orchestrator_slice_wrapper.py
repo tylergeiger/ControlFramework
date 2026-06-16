@@ -485,19 +485,41 @@ class OrchestratorSliceWrapper:
 
         node_res_mapping = {}
 
-        # Build up the node_res mapping to include nodes before modify
-        # This is needed for Network Service slivers when interfaces from VM before modify
-        # are added to the new Network Service slivers
-        for x in new_topology.nodes.values():
-            if x in topology_diff.added.nodes or x in topology_diff.removed.nodes:
-                continue
-            node_res_mapping[x.node_id] = x.reservation_info.reservation_id
+        # The reservation ids of pre-existing elements live in the slice graph the
+        # orchestrator persisted, not necessarily in a freshly built modify graph.
+        # A client that submits a declaratively rebuilt ASM (e.g. the Terraform
+        # provider) carries no reservation_info on unchanged nodes, so look the id
+        # up from the existing slice by node name rather than dereferencing the
+        # submitted graph, which would otherwise raise
+        # AttributeError: 'NoneType' object has no attribute 'reservation_id'.
+        existing_nodes_by_name = {n.name: n for n in existing_topology.nodes.values()}
 
-        # Build Network Service mapping to update dependencies for Peered Network Services
+        def resolve_existing_reservation_id(name: str):
+            existing_node = existing_nodes_by_name.get(name)
+            if existing_node is not None and existing_node.reservation_info is not None:
+                return existing_node.reservation_info.reservation_id
+            return None
+
+        def node_reservation_id(node) -> str:
+            if node.reservation_info is not None and node.reservation_info.reservation_id is not None:
+                return node.reservation_info.reservation_id
+            return resolve_existing_reservation_id(node.name)
+
+        def sliver_reservation_id(node_sliver) -> str:
+            if node_sliver.reservation_info is not None and \
+                    node_sliver.reservation_info.reservation_id is not None:
+                return node_sliver.reservation_info.reservation_id
+            return resolve_existing_reservation_id(node_sliver.get_name())
+
+        # Build the node + Network Service mapping for nodes that exist before
+        # modify. This is needed when interfaces from a pre-existing VM are added
+        # to new Network Service slivers.
         for x in new_topology.nodes.values():
             if x in topology_diff.added.nodes or x in topology_diff.removed.nodes:
                 continue
-            ns_mapping[x.node_id] = x.reservation_info.reservation_id
+            res_id = node_reservation_id(x)
+            node_res_mapping[x.node_id] = res_id
+            ns_mapping[x.node_id] = res_id
 
         # Add Nodes
         for x in topology_diff.added.nodes:
@@ -522,7 +544,7 @@ class OrchestratorSliceWrapper:
         # Add components
         for x in topology_diff.added.components:
             sliver, parent_node_id = FimHelper.get_parent_node(graph_model=new_slice_graph, node=x)
-            rid = sliver.reservation_info.reservation_id
+            rid = sliver_reservation_id(sliver)
             # If corresponding sliver also has add operations; it's already in the map
             # No need to rebuild it
             if rid not in self.computed_modify_reservations:
@@ -542,7 +564,7 @@ class OrchestratorSliceWrapper:
         # Added Interfaces
         for x in topology_diff.added.interfaces:
             new_sliver, parent_node_id = FimHelper.get_parent_node(graph_model=new_slice_graph, node=x)
-            rid = new_sliver.reservation_info.reservation_id
+            rid = sliver_reservation_id(new_sliver)
             # If corresponding sliver also has add operations; it's already in the map
             # No need to rebuild it
             if rid not in self.computed_modify_reservations:

@@ -782,7 +782,7 @@ class OrchestratorHandler:
 
                 controller.accept_update_slice(slice_id=ID(uid=slice_id))
 
-            slice_model_str = slice_topology.serialize()
+            slice_model_str = slice_topology.serialize_graph()
             return ResponseBuilder.get_slice_summary(slice_list=slice_list, slice_model=slice_model_str)[0]
         except Exception as e:
             self.logger.error(traceback.format_exc())

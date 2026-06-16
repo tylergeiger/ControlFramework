@@ -35,7 +35,7 @@ container:
 
 time:
   time.startTime: -1
-  time.cycleMillis: 1000
+  time.cycleMillis: 250   # testmode: faster actor tick than the 1s production cadence
   time.firstTick: 0
   time.manual: false
 

@@ -144,7 +144,9 @@ class NetworkNodeInventory(InventoryForType):
         delegation_id, ifs_delegated_labels = FimHelper.get_delegations(delegations=ifs.get_label_delegations())
 
         assigned_bdf = delegated_label.bdf[0]
-        assigned_numa = delegated_label.numa[0]
+        # numa may be absent from an advertised delegation (e.g. a model that lists
+        # bdf but no numa); treat it as unspecified rather than subscripting None.
+        assigned_numa = delegated_label.numa[0] if delegated_label.numa else None
 
         # Updated the Requested component with VLAN, BDF, MAC
         req_ns_name = next(iter(requested.network_service_info.network_services))
@@ -161,10 +163,16 @@ class NetworkNodeInventory(InventoryForType):
             if bdf_for_requested_vlan in delegated_label.bdf:
                 bdf_index = delegated_label.bdf.index(bdf_for_requested_vlan)
                 assigned_bdf = bdf_for_requested_vlan
-                assigned_numa = delegated_label.numa[bdf_index]
+                if delegated_label.numa:
+                    assigned_numa = delegated_label.numa[bdf_index]
 
-        # Assign the first PCI Id from the list of available PCI slots
-        requested.label_allocations = Labels(bdf=assigned_bdf, numa=assigned_numa)
+        # Assign the first PCI Id from the list of available PCI slots. numa is
+        # omitted (not passed as None) when the advertised delegation does not
+        # specify it, since Labels rejects None-valued fields.
+        if assigned_numa is not None:
+            requested.label_allocations = Labels(bdf=assigned_bdf, numa=assigned_numa)
+        else:
+            requested.label_allocations = Labels(bdf=assigned_bdf)
 
         # Find index of assigned BDF in the interface delegated labels
         assigned_index = ifs_delegated_labels.bdf.index(assigned_bdf)
