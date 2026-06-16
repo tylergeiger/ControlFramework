@@ -1,0 +1,32 @@
+# CI override for the test-mode stack.
+#
+#   docker compose -f docker-compose-testmode.yaml -f docker-compose-ci.yaml pull
+#   docker compose -f docker-compose-testmode.yaml -f docker-compose-ci.yaml up -d --no-build
+#
+# Points every Control Framework service at the prebuilt images on GHCR (published
+# by build-images.yml) instead of building them locally. The base file keeps its
+# `build:` sections, so pair this with `pull` + `up --no-build`: pull grabs the
+# images by the refs below, and --no-build makes `up` fail loudly rather than fall
+# back to a 20-minute local build if a pull was missed.
+#
+# Override the owner/tag via env if needed, e.g. to pin a specific commit:
+#   CF_OWNER=tylergeiger CF_IMAGE_TAG=sha-abc1234 docker compose ... pull
+---
+services:
+  orchestrator:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-orchestrator:${CF_IMAGE_TAG:-testmode}
+
+  broker:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-broker:${CF_IMAGE_TAG:-testmode}
+
+  site1-am:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-authority:${CF_IMAGE_TAG:-testmode}
+
+  site2-am:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-authority:${CF_IMAGE_TAG:-testmode}
+
+  net1-am:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-authority:${CF_IMAGE_TAG:-testmode}
+
+  claim:
+    image: ghcr.io/${CF_OWNER:-tylergeiger}/cf-broker:${CF_IMAGE_TAG:-testmode}
