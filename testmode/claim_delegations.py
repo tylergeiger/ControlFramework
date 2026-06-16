@@ -46,8 +46,9 @@ class _Config:
         ams = os.environ.get("AM_PEERS", "site1-am-guid:site1-am-topic,net1-am-guid:net1-am-topic")
         self.am_peers = [tuple(p.split(":", 1)) for p in ams.split(",") if p.strip()]
 
-        # How long to wait for each AM's delegation to be advertised, in seconds.
-        self.timeout = int(os.environ.get("CLAIM_TIMEOUT", "300"))
+        # How long to wait for EACH AM's delegation to be advertised, in seconds.
+        # This is a per-AM budget (see _claim_from_am), not shared across AMs.
+        self.timeout = int(os.environ.get("CLAIM_ADVERTISE_TIMEOUT", "300"))
         self.poll_interval = int(os.environ.get("CLAIM_POLL_INTERVAL", "10"))
 
 
